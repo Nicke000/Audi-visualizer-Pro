@@ -20,7 +20,6 @@
             --stage-bg: radial-gradient(circle at center, #111420 0%, #030406 100%);
         }
 
-        /* 浅色主题变量配置 */
         body.light {
             --bg-dark: #e2e8f0;
             --panel-bg: #ffffff;
@@ -86,8 +85,15 @@
         .play-btn:hover { transform: scale(1.05); background: var(--accent-hover); }
         .progress-bar { flex: 1; display: flex; align-items: center; gap: 15px; font-size: 0.95rem; }
         
-        /* 常驻隐藏多媒体标签，解决浏览器挂起解码器的终极方案 */
-        #audioPlayer, #bgVideo { display: none; }
+        /* 🚀 性能优化核心1：防休眠物理隐身（绝不能用 display: none） */
+        #audioPlayer, #bgVideo {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            opacity: 0.01;
+            pointer-events: none;
+            z-index: -999;
+        }
     </style>
 </head>
 <body>
@@ -146,7 +152,7 @@
                         <input type="range" id="barCount" min="20" max="256" step="1" value="120">
                     </div>
                     <div class="ctrl-col">
-                        <label>单根条形厚度 (支持4K重载) <span class="val-display" id="valBarThick">8</span> px</label>
+                        <label>单根条形厚度 <span class="val-display" id="valBarThick">8</span> px</label>
                         <input type="range" id="barThick" min="1" max="100" step="1" value="8">
                     </div>
                     <div class="ctrl-col">
@@ -324,8 +330,9 @@
     <video id="bgVideo" loop playsinline></video>
 
     <script>
+        // 🚀 性能优化核心2：开启 alpha: false，强制关闭底层透明度混合，极大提升视频绘制帧率
         const canvas = document.getElementById('visualizer');
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', { alpha: false });
         const audioPlayer = document.getElementById('audioPlayer');
         const bgVideo = document.getElementById('bgVideo');
         const canvasWrapper = document.getElementById('canvasWrapper');
@@ -334,27 +341,27 @@
         let bgImageObj = null; 
         let bgType = 'none'; 
 
-        // 主题切换
+        // 🚀 性能优化核心3：缓存背景渲染参数，避免在 60FPS 循环中做除法和判断
+        let bgRenderCache = null;
+
         const themeToggle = document.getElementById('themeToggle');
         themeToggle.addEventListener('click', () => { document.body.classList.toggle('light'); });
 
-        // 全屏逻辑
         document.getElementById('fullBtn').addEventListener('click', () => {
             if (!document.fullscreenElement) canvasWrapper.requestFullscreen().catch(err => alert("全屏失败:" + err.message));
             else document.exitFullscreen();
         });
 
-        // 全局键盘空格控制（自动解绑滑块聚焦）
         window.addEventListener('keydown', (e) => {
             if (e.code === 'Space') {
                 e.preventDefault();
-                if (document.activeElement) document.activeElement.blur(); // 消除对滑块的干扰
+                if (document.activeElement) document.activeElement.blur(); 
                 togglePlayback();
             }
         });
 
         function togglePlayback() {
-            initAudioEngine(); // 强震激流：在用户交互瞬间绑定并唤醒核心
+            initAudioEngine(); 
             if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
             
             if (activeMedia.paused) {
@@ -366,7 +373,6 @@
             }
         }
 
-        // 参数精准绑定
         function bind(id, valId, isFloat=false) {
             const el = document.getElementById(id);
             const disp = document.getElementById(valId);
@@ -430,6 +436,7 @@
                 canvas.height = Math.round(shortSide / ratioFraction);
             }
             canvasWrapper.style.aspectRatio = aspectRatio.value;
+            bgRenderCache = null; // 画布尺寸改变，清空背景缓存
         }
         exportRes.addEventListener('change', updateCanvasDimensions);
         aspectRatio.addEventListener('change', updateCanvasDimensions);
@@ -440,7 +447,6 @@
             cColor2.style.display = colorMode.value === 'single' ? 'none' : 'block';
         });
 
-        // 媒体控制层
         const audioFile = document.getElementById('audioFile');
         const bgFile = document.getElementById('bgFile');
         let audioCtx = null, analyser = null, audioSourceNode = null, bgSourceNode = null;
@@ -456,7 +462,7 @@
                 audioPlayer.src = URL.createObjectURL(e.target.files[0]);
                 document.getElementById('audioLabel').innerText = e.target.files[0].name;
                 activeMedia = audioPlayer; 
-                bgVideo.muted = true; // 有独立音频，则背景视频强制静音
+                bgVideo.muted = true; 
                 initAudioEngine();
             }
             toggleClearBtn(audioFile, 'clearAudio', 'audioLabel', "📥 载入音频 (MP3/WAV)");
@@ -470,12 +476,12 @@
             let f = e.target.files[0];
             if(f) {
                 let url = URL.createObjectURL(f);
+                bgRenderCache = null; // 清空旧画面缓存
                 if(f.type.startsWith('video')) {
                     bgType = 'video'; 
                     bgVideo.src = url;
                     bgVideo.load();
                     
-                    // 单视频内核无缝联动：没纯音频时由背景视频单体接管全局
                     if(!audioFile.files.length) {
                         activeMedia = bgVideo;
                         bgVideo.muted = false; 
@@ -494,11 +500,11 @@
         });
         document.getElementById('clearBg').addEventListener('click', () => {
             bgFile.value = ''; bgVideo.removeAttribute('src'); bgVideo.load(); bgImageObj = null; bgType = 'none'; 
+            bgRenderCache = null;
             toggleClearBtn(bgFile, 'clearBg', 'bgLabel', "🖼️ 载入视觉背景 (图/视频)");
             if(activeMedia === bgVideo) { activeMedia = audioPlayer; audioPlayer.src = ''; }
         });
 
-        // 时间轴刷新联动
         function updateTimeline() {
             if(activeMedia && activeMedia.duration) {
                 document.getElementById('seekSlider').value = (activeMedia.currentTime / activeMedia.duration) * 100;
@@ -520,14 +526,12 @@
         });
         document.getElementById('playBtn').addEventListener('click', togglePlayback);
 
-        // 【终极解决】：静态常驻硬件单向级联连接
         function initAudioEngine() {
             if(!audioCtx) {
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 analyser = audioCtx.createAnalyser();
                 analyser.fftSize = 1024;
                 
-                // 将两个常驻DOM的多媒体标签锁死绑定在核心图谱上
                 audioSourceNode = audioCtx.createMediaElementSource(audioPlayer);
                 audioSourceNode.connect(analyser);
                 
@@ -536,7 +540,6 @@
                 
                 analyser.connect(audioCtx.destination);
                 
-                // 启动不间断自守渲染环
                 requestAnimationFrame(draw);
             }
         }
@@ -576,19 +579,29 @@
                 analyser.getByteFrequencyData(dataArray);
             }
             
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.shadowBlur = 0; // 极速清空状态，打破4K算力无底洞
+            // 重新填涂黑底，利用 alpha: false 的优势擦除上一帧
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.shadowBlur = 0; 
             ctx.globalAlpha = 1.0;
             
-            // 覆盖式智能居中剪裁 (Cover 机制，绝不拉伸变形)
-            if (bgType === 'video' && bgVideo.videoWidth) {
-                let scale = Math.max(canvas.width / bgVideo.videoWidth, canvas.height / bgVideo.videoHeight);
-                let dw = bgVideo.videoWidth * scale; let dh = bgVideo.videoHeight * scale;
-                ctx.drawImage(bgVideo, (canvas.width - dw)/2, (canvas.height - dh)/2, dw, dh);
-            } else if (bgType === 'image' && bgImageObj) {
-                let scale = Math.max(canvas.width / bgImageObj.width, canvas.height / bgImageObj.height);
-                let dw = bgImageObj.width * scale; let dh = bgImageObj.height * scale;
-                ctx.drawImage(bgImageObj, (canvas.width - dw)/2, (canvas.height - dh)/2, dw, dh);
+            // 🚀 性能优化核心3：预计算背景参数，彻底杜绝渲染器内的重载运算
+            let currentMedia = bgType === 'video' ? bgVideo : (bgType === 'image' ? bgImageObj : null);
+            if (currentMedia) {
+                let iw = bgType === 'video' ? currentMedia.videoWidth : currentMedia.width;
+                let ih = bgType === 'video' ? currentMedia.videoHeight : currentMedia.height;
+                
+                if (iw && ih) {
+                    if (!bgRenderCache || bgRenderCache.iw !== iw || bgRenderCache.cw !== canvas.width || bgRenderCache.ch !== canvas.height) {
+                        let scale = Math.max(canvas.width / iw, canvas.height / ih);
+                        bgRenderCache = {
+                            iw: iw, cw: canvas.width, ch: canvas.height,
+                            dw: iw * scale, dh: ih * scale,
+                            dx: (canvas.width - iw * scale) / 2, dy: (canvas.height - ih * scale) / 2
+                        };
+                    }
+                    ctx.drawImage(currentMedia, bgRenderCache.dx, bgRenderCache.dy, bgRenderCache.dw, bgRenderCache.dh);
+                }
             }
             
             ctx.fillStyle = `rgba(5, 5, 8, ${sBgDim.value})`;
@@ -597,7 +610,6 @@
             let bass = 0; for(let i=0; i<6; i++) bass += dataArray[i]; bass /= 6;
             let bassRatio = bass / 255; 
             
-            // 粒子模拟
             if (pType.value !== 'none') {
                 if(particles.length < 120) particles.push(getParticle());
                 const hC = hexToRgb(pColor.value);
@@ -622,7 +634,6 @@
                 });
             }
 
-            // 精密解耦全宽呼吸碰撞公式
             const baseWidthPercent = parseFloat(sSpecWidth.value) / 100;
             const bouncePercent = parseFloat(sSpecBounce.value) / 100;
             const baseW_pixels = canvas.width * baseWidthPercent;
@@ -644,7 +655,6 @@
             ctx.lineWidth = unitThick;
             ctx.globalAlpha = parseFloat(sBarAlpha.value);
             
-            // 4K自适应降低辉光半径限制
             let glow = parseInt(sGlowStr.value);
             if(canvas.width > 2000) glow = Math.min(glow, 22); 
             if(glow > 0) ctx.shadowBlur = glow;
@@ -690,7 +700,6 @@
             requestAnimationFrame(draw);
         }
 
-        // 高清录制
         recordBtn.addEventListener('click', () => {
             if(!audioCtx) return alert("请载入音频或视频并播放后再录制！");
             if(!isRecording) {
@@ -720,7 +729,6 @@
             }
         });
 
-        // 首次加载初始化自洗牌
         updateCanvasDimensions();
     </script>
 </body>
